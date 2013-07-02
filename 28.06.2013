@@ -1,0 +1,945 @@
+// 28 06 2013 22:44(FET)
+#include <SPI.h>
+#include <LiquidCrystal.h>
+#include <Bounce.h>
+#include <EEPROM.h>
+
+#define buzzer 6
+#define power_internal 9
+#define power_external 8
+#define led 7
+#define up A1
+#define down A2
+#define menu A3
+#define esc A4
+#define volt_pin A0
+#define lcd_led 5
+
+LiquidCrystal lcd(10);
+
+unsigned int count = 0; //считает
+unsigned int count_print = 0;
+byte count_min = 100;
+unsigned int count_max = 0;
+
+long previousMillis = 0;  
+int interval = 1000;
+int time = 0;
+byte flag = 0;
+byte calib_bd1;
+byte calib_bd2;
+byte buz_freq; //частота бузера * 100
+boolean buz_state; //состояние бузера вкл/выкл
+boolean lcd_output; // 0 - uR/h; 1 - uSv/h
+boolean led_state;
+boolean alarm_state;
+boolean lcd_led_state;
+boolean select_counter; // 0 - int, 1 -ext
+int doze_alarm;
+byte time_bd;
+float doze;
+
+
+float voltage;
+float volt1;
+float volt2;
+byte volt1_c;
+byte volt1_p;
+byte volt2_c;
+byte volt2_p;
+int volt1_s;
+int volt2_s;
+float count_av[2];
+float count_av_print;
+
+int a = 0;
+
+
+Bounce bouncer = Bounce( up, 5 );
+Bounce bouncer1 = Bounce( down, 5 );
+Bounce bouncer2 = Bounce( menu, 5 );
+Bounce bouncer3 = Bounce( esc, 5 );
+
+
+void setup()
+{
+  // Serial.begin(9600);
+  pinMode(buzzer, OUTPUT); //буззер на выход
+  pinMode(led, OUTPUT); //светодиод на выход
+  pinMode(up, INPUT);
+  pinMode(down, INPUT);
+  pinMode(menu, INPUT);
+  pinMode(esc, INPUT);
+  pinMode(power_internal, OUTPUT);
+  pinMode(power_external, OUTPUT);
+  pinMode(lcd_led, OUTPUT);
+  lcd.begin(16, 2);
+  if (EEPROM.read(255) == 255)
+  {
+    EEPROM.write(1, 1);
+    EEPROM.write(2, 25);
+    EEPROM.write(3, 10);
+    EEPROM.write(4, 0);
+    EEPROM.write(5, 0);
+    EEPROM.write(6, 1);
+    EEPROM.write(7, 50);
+    EEPROM.write(8, 1);
+    EEPROM.write(9, 50);
+    EEPROM.write(10, 10);
+    EEPROM.write(11, 0);
+    EEPROM.write(12, 0);
+    EEPROM.write(13, 1);
+    EEPROM.write(255, 1);
+  }
+
+  read_setting();
+  digitalWrite(lcd_led, lcd_led_state);
+  lcd.setCursor(2,0);
+  lcd.print("X-Scan v1.0");
+  lcd.setCursor(0,1);
+  lcd.print("vk.com/celectro");
+  delay(3000);
+  lcd.clear();
+  flag = 0;
+  time = 0;
+  count = 0;
+  sel_counter();
+}
+void read_setting()
+{
+  buz_state = EEPROM.read(1);
+  buz_freq = EEPROM.read(2);
+  calib_bd1 = EEPROM.read(3);
+  lcd_output = EEPROM.read(4);
+  led_state = EEPROM.read(5);
+  volt1_c = EEPROM.read(6);
+  volt1_p = EEPROM.read(7);
+  volt2_c = EEPROM.read(8);
+  volt2_p = EEPROM.read(9);
+  calib_bd2 = EEPROM.read(10);
+  doze_alarm = EEPROM.read(11);
+  select_counter = EEPROM.read(12);
+  lcd_led_state = EEPROM.read(13);
+  volt1 = (float)(volt1_c * 100 + volt1_p) / 100;
+  volt2 = (float)(volt2_c * 100 + volt2_p) / 100;
+}
+void loop()
+{
+  read_but(); //читаем кнопки
+  unsigned long currentMillis = millis();
+  if(currentMillis - previousMillis > interval) {
+    previousMillis = currentMillis;
+    time++;
+    //КОД ВЫПОЛНЯЮЩИЙСЯ 1 РАЗ В СЕКУНДУ *НАЧАЛО
+
+    //КОД ВЫПОЛНЯЮЩИЙСЯ 1 РАЗ В СЕКУНДУ *КОНЕЦ
+    if (time == time_bd)
+    {
+      //КОД ВЫПОЛНЯЮЩИЙСЯ 1 РАЗ В calib_bd1 СЕКУНД *НАЧАЛО
+      if (flag == 0) flag++;
+      count_print = count;
+      count = 0;
+      time = 0;
+      count_av[2] = count_av[1];
+      count_av[1] = count_av[0];
+      count_av[0] = (float)count_print;
+      count_av_print = (count_av[0] + count_av[1] + count_av[2]) / 3;
+      doze = doze + ((float)count_print / 3600 * time_bd);
+      min_max();
+
+
+      //КОД ВЫПОЛНЯЮЩИЙСЯ 1 РАЗ В 10 СЕКУНД *КОНЕЦ
+    }
+    voltmeter();
+    update_lcd();
+    alarm();        
+  }
+
+}
+
+void counter()
+{
+  count++;
+  // Serial.println(count);
+  if (alarm_state == 0)
+  {
+    if (led_state == 1) digitalWrite(led, HIGH);  
+    if (buz_state == 1) tone(buzzer, buz_freq * 100, 2);
+    if (led_state == 1) {
+      if (buz_state == 0) delay(2);
+      digitalWrite(led, LOW);
+    }
+  }
+}
+
+void read_but(){
+  //чтение up
+  if ( bouncer.update() ) {  
+    if ( bouncer.read() == HIGH) {
+      if (a == 1 ||a == 2 || a == 3 || a == 4)
+      {
+        a = a - 1;
+        if (a == 0) a = 4;
+      }
+
+      if (a == 11 || a == 12 || a == 13 || a == 14 || a == 15 || a == 16 || a == 17 || a == 18)
+      {
+        a = a - 1;
+        if (a == 10) a = 18;
+      }
+      if (a == 21 || a == 22 || a == 23 || a == 24)
+      {
+        a = a - 1;
+        if (a == 20) a = 24;
+      }
+      if (a == 31 || a == 32)
+      {
+        a = a - 1;
+        if (a == 30) a = 32;
+      }
+      if (a == 111 || a == 112)
+      {
+        a = a - 1;
+        if (a == 110) a = 112;
+      }
+      if (a == 131 || a == 132)
+      {
+        a = a - 1;
+        if (a == 130) a = 132;
+      }
+      if (a == 141 || a == 142)
+      {
+        a = a - 1;
+        if (a == 140) a = 142;
+      }
+      if (a == 151 || a == 152)
+      {
+        a = a - 1;
+        if (a == 150) a = 152;
+      }
+      if (a == 161 || a == 162)
+      {
+        a = a - 1;
+        if (a == 160) a = 162;
+      }
+      if (a == 171 || a == 172)
+      {
+        a = a - 1;
+        if (a == 170) a = 172;
+      }
+
+      if (a == 181)
+      {
+        buz_freq = buz_freq - 1;
+        if (buz_freq <= 20) buz_freq = 20;
+      }
+      if (a == 1111)
+      {
+        calib_bd1--;
+        if (calib_bd1 == 0)  calib_bd1 = 1;
+      }
+      if (a == 1121)
+      {
+        calib_bd2--;
+        if (calib_bd2 == 0)  calib_bd2 = 1;
+      }
+      if (a == 1411)
+      {
+        volt1 = volt1 - 0.01;
+        if (volt1 <= 0.99)  volt1 = 1.00;
+      }
+      if (a == 1421)
+      {
+        volt2 = volt2 - 0.01;
+        if (volt2 <= 0.99)  volt2 = 1.00;
+      }
+      if (a == 121)
+      {
+        doze_alarm--;
+        if (doze_alarm <= 19)  doze_alarm = 0;
+      }      
+      lcd.clear();
+      update_lcd();
+    }
+  }
+  // чтение кнопки down
+  if ( bouncer1.update() ) {
+    if ( bouncer1.read() == HIGH) {
+      if (a == 1 || a == 2|| a == 3 || a == 4)
+      {  
+        a = a + 1;
+        if (a == 5) a = 1;
+      }
+      if (a == 11 || a == 12 || a == 13 || a == 14 || a == 15 || a == 16 || a == 17 || a == 18)
+      {
+        a = a + 1;
+        if (a == 19) a = 11;
+      }
+      if (a == 21 || a == 22 || a == 23 || a == 24)
+      {
+        a = a + 1;
+        if (a == 25) a = 21;
+      }
+      if (a == 31 || a == 32)
+      {
+        a = a + 1;
+        if (a == 33) a = 31;
+      }
+      if (a == 111 || a == 112)
+      {
+        a = a + 1;
+        if (a == 113) a = 111;
+      }
+      if (a == 131 || a == 132)
+      {
+        a = a + 1;
+        if (a == 133) a = 131;
+      }
+
+      if (a == 141 || a == 142)
+      {
+        a = a + 1;
+        if (a == 143) a = 141;
+      }
+      if (a == 151 || a == 152)
+      {
+        a = a + 1;
+        if (a == 153) a = 151;
+      }
+      if (a == 161 || a == 162)
+      {
+        a = a + 1;
+        if (a == 163) a = 161;
+      }
+      if (a == 171 || a == 172)
+      {
+        a = a + 1;
+        if (a == 173) a = 171;
+      }
+      if (a == 181)
+      {
+        buz_freq = buz_freq + 1;
+        if (buz_freq >= 50) buz_freq = 50;
+      }
+      if (a == 1111)
+      {
+        calib_bd1++;
+        if (calib_bd1 == 100) calib_bd1 = 99;
+      }
+      if (a == 1121)
+      {
+        calib_bd2++;
+        if (calib_bd2 == 100) calib_bd2 = 99;
+      }
+      if (a == 1411)
+      {
+        volt1 = volt1 + 0.01;
+        if (volt1 >= 5.01)  volt1 = 5.00;
+      }
+      if (a == 1421)
+      {
+        volt2 = volt2 + 0.01;
+        if (volt2 >= 5.01)  volt2 = 5.00;
+      }
+      if (a == 121)
+      {
+        if(doze_alarm == 0) doze_alarm = 19;
+        doze_alarm++;
+        if (doze_alarm >= 255) doze_alarm = 255;
+      }        
+      lcd.clear();
+      update_lcd();
+    }
+  }
+  // Чтение кнопки menu
+  if ( bouncer2.update() ) {
+    if ( bouncer2.read() == HIGH) {
+      switch (a) {
+      case 0:
+        a = 1;
+        break;
+      case 1:
+        a = 11;
+        break;
+      case 11:
+        a = 111;
+        break;
+      case 2:
+        a = 21;
+        break;
+      case 3:
+        if(select_counter == 0) a = 31;
+        if(select_counter == 1) a = 32;
+        break;
+      case 4:
+        a = 41;
+        break;
+      case 13:
+        if (buz_state == 1) a = 131;
+        else a = 132;
+        break;
+      case 131:
+        EEPROM.write(1, 1);
+        print_save();
+        break;
+      case 132:
+        EEPROM.write(1, 0);
+        print_save();
+        break;
+      case 16:
+        if (led_state == 1) a = 161;
+        else a = 162;
+        break;
+      case 161:
+        EEPROM.write(5, 1);
+        print_save();
+        break;
+      case 162:
+        EEPROM.write(5, 0);
+        print_save();
+        break;
+      case 15:
+        if (lcd_led_state == 1) a = 151;
+        else a = 152;
+        break;
+      case 17:
+        if (lcd_output == 0) a = 171;
+        else a = 172;
+        break;
+      case 18:
+        a = 181;
+        break;
+      case 111:
+        a = 1111;
+        break;
+      case 112:
+        a = 1121;
+        break;
+      case 181:
+        EEPROM.write(2, buz_freq);
+        print_save();
+        break;
+      case 1111:
+        EEPROM.write(3, calib_bd1);
+        print_save();
+        flag = 0;
+        count = 0;
+        time = 0;
+        break;
+      case 1121:
+        EEPROM.write(10, calib_bd2);
+        print_save();
+        break;
+      case 171:
+        EEPROM.write(4,0);
+        print_save();
+        break;
+      case 172:
+        EEPROM.write(4,1);
+        print_save();
+        break;
+      case 24:
+        a = 241;
+        break;
+      case 14:
+        a = 141;
+        break;
+      case 141:
+        a = 1411;
+        break;
+      case 142:
+        a = 1421;
+        break;
+      case 1411:
+        volt1_s = volt1 * 100;
+        volt1_c = volt1_s / 100;
+        volt1_p = volt1_s % 100;
+        EEPROM.write(6, volt1_c);
+        EEPROM.write(7, volt1_p);
+        //  serial23();
+        break;
+      case 1421:
+        volt2_s = volt2 * 100;
+        volt2_c = volt2_s / 100;
+        volt2_p = volt2_s % 100;
+        EEPROM.write(8, volt2_c);
+        EEPROM.write(9, volt2_p);
+        // serial23();
+        break;
+      case 12:
+        a = 121;
+        break;
+      case 121:
+        EEPROM.write(11, doze_alarm);
+        print_save();
+        break;
+      case 31:
+        EEPROM.write(12,0);
+        print_save();
+        break;
+      case 32:
+        EEPROM.write(12,1);
+        print_save();
+        break;
+      case 151:
+        EEPROM.write(13,1);
+        print_save();
+        break;
+      case 152:
+        EEPROM.write(13,0);
+        print_save();
+        break;
+      case 23:
+        a = 231;
+        break;  
+      case 21:
+        a = 211;
+        break;
+      case 22:
+        a = 221;
+        break;        
+      }
+      lcd.clear();
+      update_lcd();
+    }
+  }
+  // чтение кнопки esc
+  if ( bouncer3.update() ) {
+    if ( bouncer3.read() == HIGH) {
+      if (a == 0) {
+        flag = 0;
+        count = 0;
+        count_print = 0;
+        time = 0;
+        count_av[2] = 0;
+        count_av[1] = 0;
+        count_av[0] = 0;
+      }
+      // if (a == 231) doze = 0;
+      if (a >= 1 && a <= 9) a = 0;
+      if ( a >= 11 && a <= 9999) a = a / 10;
+      lcd.clear();
+      update_lcd();
+    }
+  }
+}
+
+void update_lcd()
+{
+  //Serial.println(freeMemory());  
+  //Serial.println(select_counter);
+  if (a == 0){
+    if (flag == 0)
+    {
+      lcd.setCursor(0, 0);
+      if (lcd_output == 0) lcd.print(count);
+      else
+      {
+        lcd.print((float)count / 100,2);
+      }
+    }
+    else
+    {  
+      lcd.setCursor(0, 0);
+      if (lcd_output == 0) lcd.print(count_print);
+      else
+      {
+        lcd.print((float)count_print / 100,2);
+      }
+    }
+    if (lcd_output == 0) lcd.print("uR/h ");
+    else lcd.print("uSv/h ");
+    lcd.print(time);
+    lcd.print("s   ");
+    lcd.setCursor(14, 0);
+    if(select_counter == 0) lcd.print("IN");
+    else lcd.print("EX");
+  }
+  else
+  {
+    lcd.setCursor(0, 0);
+    if (a == 1 || a == 2)
+    {
+      lcd.print(" Setting     1/2");
+      lcd.setCursor(0,1);
+      lcd.print(" Status");
+      update_cursor();
+    }
+    if (a == 3 || a == 4)
+    {
+      lcd.print(" Counter     2/2");
+      lcd.setCursor(0,1);
+      lcd.print(" About");
+      update_cursor();
+    }
+    if (a == 11 || a == 12)
+    {
+      lcd.print(" Sensor      1/4");
+      lcd.setCursor(0,1);
+      lcd.print(" Doze Alarm");
+      update_cursor();
+    }
+  }
+  if (a == 13 || a == 14)
+  {
+    lcd.print(" Buzzer      2/4");
+    lcd.setCursor(0,1);
+    lcd.print(" Power Managment");
+    update_cursor();
+  }
+  if (a == 15 || a == 16)
+  {
+    lcd.print(" LED LCD     3/4");
+    lcd.setCursor(0,1);
+    lcd.print(" LED alarm");
+    update_cursor();
+  }
+  if (a == 17 || a == 18)
+  {
+    lcd.print(" LCD Output  4/4");
+    lcd.setCursor(0,1);
+    lcd.print(" Buzzer tone");
+    update_cursor();
+  }
+  if (a == 21 || a == 22)
+  {
+    lcd.print(" Doze MAX    1/2");
+    lcd.setCursor(0,1);
+    lcd.print(" Doze MIN");
+    update_cursor();
+  }
+  if (a == 23 || a == 24)
+  {
+    lcd.print(" Doze Equiv  2/2");
+    lcd.setCursor(0,1);
+    lcd.print(" Voltmeter");
+    update_cursor();
+  }
+  if (a == 31 || a == 32)
+  {
+    lcd.print(" Internal    1/1");
+    lcd.setCursor(0,1);
+    lcd.print(" External");
+    update_cursor();
+    sel_counter();
+  }
+  if (a == 41)
+  {
+    lcd.print(" vk.com/celectro");
+    lcd.setCursor(0,1);
+    lcd.print("      2013");
+    update_cursor();
+  }
+  if (a == 111 || a == 112)
+  {
+    lcd.print(" Calib. BD1  1/1");
+    lcd.setCursor(0,1);
+    lcd.print(" Calib. BD2");
+    update_cursor();
+  }
+  if (a == 131 || a == 132)
+  {
+    lcd.print(" ON       Buzzer");
+    lcd.setCursor(0,1);
+    lcd.print(" OFF");
+    update_cursor();
+    update_setting();
+  }
+  if (a == 151 || a == 152)
+  {
+    lcd.print(" ON      LED LCD");
+    lcd.setCursor(0,1);
+    lcd.print(" OFF");
+    update_cursor();
+    update_setting();
+    digitalWrite(lcd_led, lcd_led_state);
+  }
+  if (a == 161 || a == 162)
+  {
+    lcd.print(" ON    LED Alarm");
+    lcd.setCursor(0,1);
+    lcd.print(" OFF");
+    update_cursor();
+    update_setting();
+  }
+  if (a == 171 || a == 172)
+  {
+    lcd.print(" uR/h LCD Output");
+    lcd.setCursor(0,1);
+    lcd.print(" uSv/h");
+    update_cursor();
+    update_setting();
+  }  
+  if (a == 1111)
+  {
+    lcd.print(calib_bd1);
+    lcd.setCursor(6,0);
+    lcd.print("Calib. BD1");
+    sel_counter();
+  }
+  if (a == 1121)
+  {
+    lcd.print(calib_bd2);
+    lcd.setCursor(6,0);
+    lcd.print("Calib. BD2");
+    sel_counter();
+  }  
+  if (a == 181)
+  {
+    lcd.print(buz_freq*100);
+    lcd.print(" Buzzer tone");    
+  }
+  if (a == 241)
+  {
+    lcd.print("Battery Voltage");
+    lcd.setCursor(5,1);
+    lcd.print(voltage, 2);
+    lcd.print(" V");
+  }
+  if (a == 1421)
+  {
+    lcd.print(volt2, 2);
+    lcd.setCursor(5,0);
+    lcd.print("V     Empty");
+    lcd.setCursor(9,1);
+    lcd.print("battery");
+  }
+  if (a == 1411)
+  {
+    lcd.print(volt1, 2);
+    lcd.setCursor(5,0);
+    lcd.print("V     Alarm");
+    lcd.setCursor(9,1);
+    lcd.print("battery");
+  }
+  if (a == 141 || a == 142)
+  {
+    lcd.print(" Alarm bat   1/1");
+    lcd.setCursor(0,1);
+    lcd.print(" Empty bat");
+    update_cursor();
+  }
+  if (a == 121)
+  {
+    if (doze_alarm == 0) lcd.print("Doze Alarm OFF");
+    else
+    {
+      lcd.print(doze_alarm);
+      lcd.setCursor(12,0);
+      lcd.print("uR/h");
+    }
+  }
+  if (a == 231)
+  {
+    if (lcd_output == 0)
+    {
+      lcd.print(doze, 2);
+      lcd.print(" uR");
+    }
+    else
+    {
+      lcd.print(doze/100, 4);
+      lcd.print(" uSv");
+    }
+    lcd.setCursor(12,0);
+    lcd.print("Doze");
+  }
+  if (a == 211)
+  {
+    if (lcd_output == 0){
+      lcd.print(count_max);
+      lcd.print(" uR");
+    }
+    else 
+    {
+      lcd.print((float)count_max/100, 2);
+      lcd.print(" uSv");
+    }
+    lcd.setCursor(13,0);
+    lcd.print("MAX");
+
+  }
+  if (a == 221)
+  {
+    if (lcd_output == 0){
+      lcd.print(count_min);
+      lcd.print(" uR");
+    }
+    else 
+    {
+      lcd.print((float)count_min/100, 2);
+      lcd.print(" uSv");
+    }
+    lcd.setCursor(13,0);
+    lcd.print("MIN");
+  }
+
+}
+
+void update_cursor()
+{
+  if (a == 1 || a == 3 || a == 11 || a == 13 || a == 15 || a == 17 || a == 21 || a == 23 || a == 31 || a == 111 || a == 131 || a == 151 || a == 161 || a == 171 || a == 141)
+  {
+    lcd.setCursor(0,0);
+    lcd.print(">");
+  }
+  if (a == 2 || a == 4 || a == 12 || a == 14 || a == 16 || a == 18 || a == 22 || a == 24 || a == 32 || a == 112 || a == 132 || a == 152 || a == 162 || a == 172 || a == 142)
+  {
+    lcd.setCursor(0,1);
+    lcd.print(">");
+  }
+}
+
+void update_setting()
+{
+  if (a == 131) buz_state = 1;
+  if (a == 132) buz_state = 0;
+  if (a == 171) lcd_output = 0;
+  if (a == 172) lcd_output = 1;
+  if (a == 161) led_state = 1;
+  if (a == 162) led_state = 0;
+  if (a == 151) lcd_led_state = 1;
+  if (a == 152) lcd_led_state = 0;
+}
+void sel_counter()
+{
+  if (a == 31) select_counter = 0;
+  if (a == 32) select_counter = 1;
+  if (select_counter == 0)
+  {
+    detachInterrupt(1);
+    attachInterrupt(0, counter, FALLING);
+    digitalWrite(power_external, HIGH);
+    digitalWrite(power_internal, LOW);
+    time_bd = calib_bd1;
+    flag = 0;
+    time = 0;
+    count = 0;
+  }
+  if (select_counter == 1)
+  {
+    detachInterrupt(0);
+    attachInterrupt(1, counter, FALLING);
+    digitalWrite(power_internal, HIGH);
+    digitalWrite(power_external, LOW);
+    time_bd = calib_bd2;
+    flag = 0;
+    time = 0;
+    count = 0;
+  }  
+}
+
+void print_save()
+{
+  lcd.setCursor(12,1);
+  lcd.print("SAVE");
+  delay(200);
+}
+void voltmeter()
+{
+  voltage = analogRead(volt_pin) / 204.6;
+  if (voltage <= volt2)
+  {
+    lcd.clear();
+    lcd.setCursor(4,0);
+    lcd.print("BATTERY");
+    lcd.setCursor(5,1);
+    lcd.print("EMPTY");
+    led_state = 1;
+    buz_state = 0;
+    while(1)
+    {
+      tone(buzzer, 3000, 600);
+      delay(3000);
+    }
+
+  }
+  if(a == 0)
+  {
+    lcd.setCursor(0,1);
+    if (voltage <= volt1)
+    {
+      lcd.print("  LOW BATTERY!");
+    }
+    else average();
+  }
+
+}
+
+void alarm()
+{
+  if (doze_alarm != 0)
+  {
+    if (count >= doze_alarm || count_print >= doze_alarm )
+    {
+      alarm_state = 1;
+    }
+    if (count_print < doze_alarm && count < doze_alarm)
+    {
+      alarm_state = 0;
+    }
+    if (alarm_state == 1)
+    {
+      digitalWrite(led, HIGH);
+      tone(buzzer, 3000, 100);      
+    }
+  }
+  if (doze_alarm == 0) alarm_state = 0;
+}
+void average()
+{
+  lcd.print("AV:");
+  if (lcd_output == 0) lcd.print(count_av_print, 2);
+  if (lcd_output == 1) lcd.print((count_av_print / 100), 4);
+}
+
+void min_max()
+{
+  if (count_print < count_min) count_min = count_print;
+  if (count_print > count_max) count_max = count_print;
+}
+/*
+    extern unsigned int __heap_start;
+ extern void *__brkval;
+ extern struct __freelist *__flp;
+ 
+ 
+ struct __freelist {
+ size_t sz;
+ struct __freelist *nx;
+ };
+ 
+ 
+ int freeListSize() {
+ struct __freelist* current;
+ int total = 0;
+ 
+ for (current = __flp; current; current = current->nx) {
+ total += 2;
+ 
+ total += (int) current->sz;
+ }
+ 
+ return total;
+ }
+ 
+ int freeMemory() {
+ int free_memory;
+ if ((int)__brkval == 0) {
+ free_memory = ((int)&free_memory) - ((int)&__heap_start);
+ }
+ else {
+ free_memory = ((int)&free_memory) - ((int)__brkval);
+ free_memory += freeListSize();
+ }
+ return free_memory;
+ }
+ */
+
+
+
+
+
+
+
+
